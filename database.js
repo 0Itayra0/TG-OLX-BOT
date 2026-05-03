@@ -4,7 +4,8 @@ const mongoose = require('mongoose');
 const userSchema = new mongoose.Schema({
     chatId: { type: Number, required: true, unique: true },
     keywords: [{ type: String }],
-    seenAds: [{ type: String }] 
+    stopWords: [{ type: String }], 
+    seenAds: [{ type: String }]
 });
 
 const User = mongoose.model('User', userSchema);

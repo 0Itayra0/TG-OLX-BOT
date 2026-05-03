@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-// Тепер шапка запиту чиста, вимагає лише searchParameters
+// Додали created_time та last_refresh_time у запит
 const GRAPHQL_QUERY = `query ListingSearchQuery(
   $searchParameters: [SearchParameter!] = []
 ) {
@@ -11,6 +11,8 @@ const GRAPHQL_QUERY = `query ListingSearchQuery(
         id
         title
         url
+        created_time
+        last_refresh_time
         params {
           key
           value {
@@ -32,7 +34,6 @@ async function fetchOlxAds(keyword) {
         const response = await axios.post('https://www.olx.ua/apigateway/graphql', {
             query: GRAPHQL_QUERY,
             variables: {
-                // Видалили зайві змінні звідси також
                 searchParameters: [
                     { key: "offset", value: "0" },
                     { key: "limit", value: "10" },
@@ -49,15 +50,8 @@ async function fetchOlxAds(keyword) {
             }
         });
 
-        if (response.data.errors) {
-            console.error(`❌ GraphQL лається на слово "${keyword}":`, JSON.stringify(response.data.errors, null, 2));
-            return [];
-        }
-
-        if (!response.data.data || !response.data.data.clientCompatibleListings) {
-            console.error(`🚨 Неочікувана відповідь від OLX для "${keyword}":`, JSON.stringify(response.data, null, 2));
-            return [];
-        }
+        if (response.data.errors) return [];
+        if (!response.data.data || !response.data.data.clientCompatibleListings) return [];
 
         const rawAds = response.data.data.clientCompatibleListings.data;
         const ads = [];
@@ -72,18 +66,26 @@ async function fetchOlxAds(keyword) {
                 itemPrice = priceParam.value.label || `${priceParam.value.value} ${priceParam.value.currency}`;
             }
 
+            // ВИЗНАЧАЄМО ВІК ОГОЛОШЕННЯ
+            const adDateStr = item.last_refresh_time || item.created_time;
+            const adDate = new Date(adDateStr);
+            const now = new Date();
+            const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; 
+            const isOld = (now - adDate) > MAX_AGE_MS;
+
             ads.push({
                 id: item.id.toString(),
                 title: item.title,
                 price: itemPrice,
-                link: item.url
+                link: item.url,
+                isOld: isOld // Передаємо цей статус в index.js
             });
         }
 
         return ads;
 
     } catch (error) {
-        console.error(`❌ Помилка API для слова "${keyword}":`, error.response ? error.response.status : error.message);
+        console.error(`❌ Помилка API:`, error.message);
         return [];
     }
 }
