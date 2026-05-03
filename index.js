@@ -2,7 +2,6 @@ require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 const { connectDB, User } = require('./database');
-// ДОДАЄМО ЦЕЙ РЯДОК:
 const { fetchOlxAds } = require('./parser'); 
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -27,6 +26,16 @@ bot.start(async (ctx) => {
     } catch (err) {
         console.error(err);
         ctx.reply('Сталася помилка при підключенні до бази.');
+    }
+});
+
+// Команда /stop
+bot.command('stop', async (ctx) => {
+    try {
+        await User.findOneAndDelete({ chatId: ctx.chat.id });
+        ctx.reply('🛑 Бот зупинено. Дані видалено, розсилку вимкнено. Щоб увімкнути знову, напишіть /start.');
+    } catch (error) {
+        ctx.reply('Помилка при видаленні з бази.');
     }
 });
 
@@ -83,44 +92,48 @@ connectDB().then(() => {
     console.log('🤖 Телеграм-бот запущений');
 
     // Крон працює кожні 5 хвилин
-    cron.schedule('*/1 * * * *', async () => {
+    cron.schedule('*/5 * * * *', async () => {
         console.log('⏳ Запуск перевірки OLX...');
         
         try {
-            // Отримуємо всіх користувачів з бази (в нашому випадку - тата)
             const users = await User.find();
 
             for (const user of users) {
+                
+                // 🛑 ЖОРСТКА ПЕРЕВІРКА: Дозволяємо парсинг ТІЛЬКИ для твого ID
+                if (user.chatId !== 983117009) {
+                    console.log(`Пропускаємо чат ${user.chatId} (режим тестування)`);
+                    continue; 
+                }
+
                 if (user.keywords.length === 0) continue;
 
                 for (const keyword of user.keywords) {
                     console.log(`Шукаємо: ${keyword} для чату ${user.chatId}`);
                     
-                    // ВИКЛИКАЄМО НАШ ПАРСЕР
                     const newAds = await fetchOlxAds(keyword);
 
+                    // Перевіряємо, чи це найперший запуск
+                    const isFirstRun = user.seenAds.length === 0;
+
                     for (const ad of newAds) {
-                        // Якщо цього ID ще немає в масиві seenAds
                         if (!user.seenAds.includes(ad.id)) {
                             
-                            // 1. Формуємо гарне повідомлення
-                            const message = `🚨 <b>Нове оголошення!</b>\n\n🔍 Запит: <i>${keyword}</i>\n📦 <b>${ad.title}</b>\n💰 Ціна: ${ad.price}\n\n🔗 <a href="${ad.link}">Перейти на OLX</a>`;
-                            
-                            // 2. Відправляємо в Telegram (використовуємо bot.telegram, бо ctx тут немає)
-                            await bot.telegram.sendMessage(user.chatId, message, { parse_mode: 'HTML' });
-
-                            // 3. Додаємо ID в базу, щоб більше не відправляти
                             user.seenAds.push(ad.id);
+
+                            if (!isFirstRun) {
+                                const message = `🚨 <b>Нове оголошення!</b>\n\n🔍 Запит: <i>${keyword}</i>\n📦 <b>${ad.title}</b>\n💰 Ціна: ${ad.price}\n\n🔗 <a href="${ad.link}">Перейти на OLX</a>`;
+                                
+                                await bot.telegram.sendMessage(user.chatId, message, { parse_mode: 'HTML' });
+                            }
                         }
                     }
                 }
                 
-                // Очищення бази: щоб масив не ріс до безкінечності, залишаємо тільки останні 200 ID
                 if (user.seenAds.length > 200) {
                     user.seenAds = user.seenAds.slice(-200);
                 }
                 
-                // Зберігаємо оновлені дані користувача
                 await user.save();
             }
             console.log('✅ Перевірка завершена.');
@@ -129,6 +142,10 @@ connectDB().then(() => {
         }
     });
 });
+
+// Завершення роботи
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 // Завершення роботи
 process.once('SIGINT', () => bot.stop('SIGINT'));
